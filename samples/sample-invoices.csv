@@ -1,0 +1,4 @@
+Invoice No,Invoice Date,Supplier Name,Supplier GSTIN,Buyer Name,Place of Supply,Description,HSN,Qty,Unit Price,Taxable Value,GST Rate,CGST Rate,SGST Rate,CGST,SGST,IGST,Line Total,Grand Total
+VYM-2026-001,2026-01-15,Sahyadri Office Supplies,27AAPFU0939F1ZV,Demo Retail Private Ltd,27-Maharashtra,Office chairs,9403,2,5000.00,10000.00,18,9,9,900.00,900.00,0.00,11800.00,14160.00
+VYM-2026-001,2026-01-15,Sahyadri Office Supplies,27AAPFU0939F1ZV,Demo Retail Private Ltd,27-Maharashtra,Desk lamps,9405,4,500.00,2000.00,18,9,9,180.00,180.00,0.00,2360.00,14160.00
+VYM-2026-002,2026-01-16,Sahyadri Office Supplies,27AAPFU0939F1ZV,Example Studio,27-Maharashtra,Storage cabinet,9403,1,8000.00,8000.00,18,9,9,720.00,720.00,0.00,9440.00,9440.00

@@ -1,0 +1,2 @@
+Invoice No,Invoice Date,Supplier Name,Supplier GSTIN,Buyer Name,Place of Supply,Description,HSN,Qty,Unit Price,Taxable Value,GST Rate,CGST Rate,SGST Rate,CGST,SGST,IGST,Line Total,Grand Total
+VYM-2026-001,2026-01-15,Sahyadri Office Supplies,27AAPFU0939F1ZV,Demo Retail Private Ltd,27-Maharashtra,Office chairs,9403,2,5000.00,10000.00,18,9,9,900.00,900.00,0.00,11800.00,12000.00
