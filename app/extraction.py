@@ -8,8 +8,10 @@ from pathlib import Path
 
 import numpy as np
 import pypdfium2 as pdfium
-from PIL import Image, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageFilter, ImageOps, UnidentifiedImageError
 
+from .models import BoundingBox, SourceObservation
+from .provenance import attach_invoice_provenance
 from .text_extract import parse_text
 from .vision import extract_vision, vision_model
 
@@ -42,7 +44,11 @@ def read_image(path: Path) -> Image.Image:
         raise ValueError("Invalid or oversized image.") from exc
 
 
-def ocr(image: Image.Image):
+def ocr(
+    image: Image.Image,
+    include_regions: bool = False,
+    preprocessing: str = "autocontrast",
+):
     global _engine
     with _engine_lock:
         if _engine is None:
@@ -51,16 +57,40 @@ def ocr(image: Image.Image):
             _engine = RapidOCR(intra_op_num_threads=2, inter_op_num_threads=2)
         image = image.copy()
         image.thumbnail((2400, 2400))
-        image = ImageOps.autocontrast(ImageOps.grayscale(image)).convert("RGB")
+        image = ImageOps.autocontrast(ImageOps.grayscale(image))
+        if preprocessing == "sharpened":
+            image = image.filter(ImageFilter.UnsharpMask(radius=2, percent=150, threshold=3))
+        image = image.convert("RGB")
+        image_width, image_height = image.size
         result, _ = _engine(np.asarray(image))
     if not result:
-        return "", None
+        return ("", None, []) if include_regions else ("", None)
     # Restore rows from bounding boxes instead of flattening multi-column tables.
     boxes = []
+    regions = []
     for box, value, score in result:
         y = sum(point[1] for point in box) / 4
         height = max(point[1] for point in box) - min(point[1] for point in box)
-        boxes.append((y, min(point[0] for point in box), max(height, 1), value, float(score)))
+        left = min(point[0] for point in box)
+        top = min(point[1] for point in box)
+        right = max(point[0] for point in box)
+        bottom = max(point[1] for point in box)
+        score = float(score)
+        boxes.append((y, left, max(height, 1), value, score))
+        regions.append(
+            SourceObservation(
+                source="ocr",
+                text=str(value),
+                bounding_box=BoundingBox(
+                    x=max(0, min(1, left / max(image_width, 1))),
+                    y=max(0, min(1, top / max(image_height, 1))),
+                    width=max(0, min(1, (right - left) / max(image_width, 1))),
+                    height=max(0, min(1, (bottom - top) / max(image_height, 1))),
+                ),
+                recognition_score=score,
+                preprocessing=f"grayscale+{preprocessing}",
+            )
+        )
     rows = []
     for box in sorted(boxes):
         if rows and abs(box[0] - rows[-1][0][0]) < max(box[2], rows[-1][0][2]) * 0.5:
@@ -71,7 +101,7 @@ def ocr(image: Image.Image):
         "  ".join(box[3] for box in sorted(row, key=lambda b: b[1])) for row in rows
     )
     score = sum(len(box[3]) * box[4] for box in boxes) / max(1, sum(len(box[3]) for box in boxes))
-    return contents, round(score, 4)
+    return (contents, round(score, 4), regions) if include_regions else (contents, round(score, 4))
 
 
 def native_pdf_text(page) -> str:
@@ -82,14 +112,36 @@ def native_pdf_text(page) -> str:
         text_page.close()
 
 
-def _page_records(image, native, handwriting):
+def _page_records(image, native, handwriting, page_number, preprocessing):
     warnings = []
     method = "pdf_text" if native else "ocr"
     confidence = None
     raw = native
+    observations = []
+    if native:
+        observations.append(
+            SourceObservation(source="native_text", page_number=page_number, text=native[:10000])
+        )
     if not native:
         try:
-            raw, confidence = ocr(image)
+            raw, confidence, regions = ocr(
+                image, include_regions=True, preprocessing=preprocessing
+            )
+            observations.extend(
+                observation.model_copy(update={"page_number": page_number})
+                for observation in regions
+            )
+            if raw:
+                observations.insert(
+                    0,
+                    SourceObservation(
+                        source="ocr",
+                        page_number=page_number,
+                        text=raw[:10000],
+                        recognition_score=confidence,
+                        preprocessing=f"grayscale+{preprocessing}",
+                    ),
+                )
         except Exception as exc:
             warnings.append(f"Local OCR unavailable/failed ({type(exc).__name__}).")
             raw = ""
@@ -100,6 +152,13 @@ def _page_records(image, native, handwriting):
     if image is not None and vision_model():
         try:
             records = extract_vision(image)
+            observations.append(
+                SourceObservation(
+                    source="vision",
+                    page_number=page_number,
+                    metadata={"evidence": "model-produced"},
+                )
+            )
             if raw and len(records) == 1:
                 baseline, _ = parse_text(raw, method, confidence)
                 comparisons = {
@@ -123,6 +182,7 @@ def _page_records(image, native, handwriting):
                 + [
                     "Vision output requires source comparison; evidence text is model-produced, not independently verified."
                 ],
+                observations,
             )
         except Exception as exc:
             warnings.append(
@@ -133,16 +193,27 @@ def _page_records(image, native, handwriting):
             "Handwriting mode requested but no local vision model configured. Printed-text OCR is a fallback, not reliable handwriting recognition."
         )
     invoice, parse_warnings = parse_text(raw, method, confidence)
-    return [invoice], raw, method, warnings + parse_warnings
+    return [invoice], raw, method, warnings + parse_warnings, observations
 
 
-def extract_document(path: Path, kind: str, handwriting: bool = False):
-    records, chunks, methods, warnings = [], [], [], []
+def extract_document(
+    path: Path,
+    kind: str,
+    handwriting: bool = False,
+    include_observations: bool = False,
+    preprocessing: str = "autocontrast",
+):
+    records, chunks, methods, warnings, observations = [], [], [], [], []
 
     def consume(image, native, page_number):
-        extracted, raw, method, notes = _page_records(image, native, handwriting)
+        extracted, raw, method, notes, page_observations = _page_records(
+            image, native, handwriting, page_number, preprocessing
+        )
         for invoice in extracted:
             invoice.field_evidence["page"] = str(page_number)
+            attach_invoice_provenance(
+                invoice, page_number=page_number, observations=page_observations
+            )
             existing = next(
                 (
                     record
@@ -162,6 +233,7 @@ def extract_document(path: Path, kind: str, handwriting: bool = False):
         chunks.append(f"--- Page {page_number} ---\n{raw}")
         methods.append(method)
         warnings.extend(f"Page {page_number}: {note}" for note in notes)
+        observations.extend(page_observations)
 
     if kind in {"png", "jpeg"}:
         consume(read_image(path), "", 1)
@@ -206,9 +278,10 @@ def extract_document(path: Path, kind: str, handwriting: bool = False):
         warnings.append(
             "Handwritten fields require human verification, even if arithmetic and GST checks pass."
         )
-    return (
+    result = (
         records,
         raw_text[:300000],
         " + ".join(dict.fromkeys(methods)),
         list(dict.fromkeys(warnings)),
     )
+    return (*result, observations) if include_observations else result

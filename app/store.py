@@ -3,6 +3,7 @@
 import csv
 import io
 import json
+import shutil
 import sqlite3
 from pathlib import Path
 
@@ -15,6 +16,8 @@ class Store:
         self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.uploads = root / "uploads"
         self.uploads.mkdir(mode=0o700, exist_ok=True)
+        self.preprocessing = root / "preprocessed"
+        self.preprocessing.mkdir(mode=0o700, exist_ok=True)
         self.db = root / "records.sqlite3"
         with self.connect() as connection:
             connection.execute(
@@ -70,6 +73,12 @@ class Store:
         with self.connect() as connection:
             connection.execute("DELETE FROM documents WHERE id=?", (document_id,))
         (self.uploads / document_id).unlink(missing_ok=True)
+        shutil.rmtree(self.preprocessing / document_id, ignore_errors=True)
+
+    def cleanup_preprocessing(self, document_id: str):
+        """Remove derived artifacts when an upload fails before persistence."""
+
+        shutil.rmtree(self.preprocessing / document_id, ignore_errors=True)
 
 
 def spreadsheet_safe(value):

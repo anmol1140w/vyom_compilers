@@ -438,7 +438,9 @@
     $('review-content').hidden = false;
     $('review-error').hidden = true;
     $('review-title').textContent = doc.filename;
-    $('review-meta').textContent = `${humanize(doc.source_type)} · ${humanize(doc.pipeline)} · Added ${formatDate(doc.created_at, true)}`;
+    const qualityLabel = doc.quality?.applicable && doc.quality.score !== null && doc.quality.score !== undefined ? ` · Quality ${doc.quality.score}/100` : '';
+    const routeLabel = doc.routing?.selected_route ? ` · Route ${humanize(doc.routing.selected_route)}` : '';
+    $('review-meta').textContent = `${humanize(doc.source_type)} · ${humanize(doc.pipeline)}${routeLabel}${qualityLabel} · Added ${formatDate(doc.created_at, true)}`;
     $('review-status').replaceChildren(statusBadge(doc.status));
     $('source-link').href = `${docPath()}/source`;
     $('invoice-select').replaceChildren();
@@ -483,6 +485,42 @@
     return card;
   }
 
+  function renderQualitySummary(panel) {
+    const doc = state.current;
+    if (!doc) return;
+    const quality = doc.quality || {};
+    const route = doc.routing || {};
+    const block = el('div', 'quality-summary');
+    block.append(panelHeading('Document quality and route', 'Heuristic signals explain the selected path; they are not field-accuracy probabilities or handwriting recognition.'));
+    const fields = el('dl', 'field-grid');
+    addField(fields, 'Quality score', quality.applicable && quality.score !== null && quality.score !== undefined ? `${quality.score}/100` : 'Not applicable to tabular input');
+    addField(fields, 'Classification', route.document_class ? humanize(route.document_class) : null);
+    addField(fields, 'Selected route', route.selected_route ? humanize(route.selected_route) : null);
+    addField(fields, 'Readability', quality.readability === null || quality.readability === undefined ? null : `${Math.round(quality.readability * 100)}% heuristic signal`);
+    addField(fields, 'Blur signal', quality.blur === null || quality.blur === undefined ? null : `${Math.round(quality.blur * 100)}% · higher means more blur`);
+    addField(fields, 'Table signal', quality.table_likelihood === null || quality.table_likelihood === undefined ? null : `${Math.round(quality.table_likelihood * 100)}% heuristic signal`);
+    addField(fields, 'Handwriting signal', quality.handwriting_likelihood === null || quality.handwriting_likelihood === undefined ? null : `${Math.round(quality.handwriting_likelihood * 100)}% weak heuristic`);
+    block.append(fields);
+    if (route.reason) block.append(el('p', 'section-note', route.reason));
+    if (Array.isArray(quality.notes)) for (const note of quality.notes) block.append(el('p', 'section-note', note));
+    const representations = Array.isArray(doc.preprocessing) ? doc.preprocessing.filter((item) => item.artifact_path) : [];
+    if (representations.length) {
+      const disclosure = el('details', 'evidence-details');
+      disclosure.append(el('summary', '', 'View retained preprocessing representations'));
+      const list = el('dl', 'evidence-list');
+      for (const representation of representations) {
+        const link = el('a', '', `${humanize(representation.name)} · page ${representation.page_number}`);
+        link.href = `${docPath()}/preprocessing/${encodeURIComponent(representation.page_number)}/${encodeURIComponent(representation.name)}`;
+        link.target = '_blank';
+        link.rel = 'noopener';
+        list.append(el('dt', '', representation.name), el('dd', '', link));
+      }
+      disclosure.append(list);
+      block.append(disclosure);
+    }
+    panel.append(block);
+  }
+
   function documentTotalNote(invoices) {
     const values = invoices.filter((invoice) => invoice.currency === 'INR').map((invoice) => invoice.totals?.grand_total).filter((value) => value !== null && value !== undefined && /^-?\d+(\.\d{1,8})?$/.test(String(value)));
     if (values.length < 2) return null;
@@ -504,6 +542,7 @@
     const panel = $('panel-overview');
     panel.replaceChildren();
     $('items-tab-count').textContent = invoice?.line_items?.length || 0;
+    renderQualitySummary(panel);
     if (!invoice) {
       panel.append(el('div', 'compact-empty', 'No invoice records were extracted. Review the issues, raw text, and source file. You can add a record using the JSON editor.'));
       renderWarnings(panel);

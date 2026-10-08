@@ -39,7 +39,7 @@ The sample GSTIN is syntactically/checksum-valid but **not verified as a real re
 Upload → size/extension/signature checks → format router
   CSV/XLSX → header/delimiter detection → rows → invoice grouping
   PDF      → native text when usable; otherwise bounded page rendering → OCR
-  JPG/PNG  → EXIF orientation + grayscale/autocontrast → OCR + layout rows
+  JPG/PNG  → bounded quality assessment + retained preprocessing → OCR + layout rows
   Optional → local Ollama VLM on page images, including handwriting
                            ↓
   strict Pydantic schema + Decimal financial normalization + source evidence
@@ -56,6 +56,8 @@ Upload → size/extension/signature checks → format router
 - Preserves original spreadsheet columns and rows in `tables`, including unmapped fields. Per-sheet rows group by invoice number and supplier identity. Ambiguous continuation rows and conflicting repeated totals are flagged.
 - Generic transaction tables are preserved as separate `transaction` records; missing GST/invoice fields remain review issues rather than being invented.
 - Printed PDF/image fallback extraction handles labeled supplier/buyer, GSTINs, invoice number/date, place of supply, amounts, and recognizable item tables. Arbitrary layouts may need a VLM or corrections.
+- Visual PDF/image input receives deterministic, bounded quality signals for blur, brightness, contrast, resolution, skew, readability, and ruled-table likelihood. The review response retains private orientation-corrected, grayscale, autocontrast, thresholded, sharpened, denoised, upscaled, and deskewed previews. These signals guide review and preprocessing; they are not field-accuracy probabilities or handwriting recognition.
+- Elevated blur selects grayscale plus sharpening for the OCR pass; normal pages use grayscale plus autocontrast. The original source is always retained separately.
 - Decimal strings avoid binary floating-point money errors. HSN/SAC and invoice identifiers stay strings. Dates use Indian day-first normalization.
 - Only defensible spreadsheet calculations are derived (quantity × price − line discount, sums of complete columns, or sums of explicit item totals). Derivations are recorded in `field_evidence`. Missing tax values are not manufactured.
 - `taxable_value` means value **after item discount and before tax**. Invoice-level `discount` is informational; it is not subtracted a second time. `round_off` is included in total reconciliation. An invoice-wide discount must already be reflected in taxable values.
@@ -115,6 +117,7 @@ curl -o records.csv 'http://127.0.0.1:8000/api/documents/DOCUMENT_ID/export?form
 | `GET /api/documents/{id}` | Complete normalized document, tables, evidence, raw text and issues |
 | `PUT /api/documents/{id}` | JSON `{ "invoices": [...], "reviewer_confirmed": true }`; strict schema and revalidation |
 | `GET /api/documents/{id}/source` | Original document download |
+| `GET /api/documents/{id}/preprocessing/{page}/{name}` | Server-controlled retained preprocessing preview |
 | `GET /api/documents/{id}/export?format=json\|csv` | Full nested JSON or flattened item CSV |
 | `DELETE /api/documents/{id}` | Remove saved record and original source |
 | `GET /api/samples` | Synthetic sample download metadata |
@@ -123,7 +126,7 @@ Use `/docs` for the complete schema. Invoice records contain supplier/buyer, inv
 
 ## Storage, safety and operating limits
 
-- Original documents and records live in `.data/` by default; set `VYOM_DATA_DIR` to change this. The app creates private directories/files and never uses client filenames as storage paths. Data is not encrypted at rest and is retained until deleted. No external telemetry is added.
+- Original documents, retained preprocessing previews, and records live in `.data/` by default; set `VYOM_DATA_DIR` to change this. The app creates private directories/files and never uses client filenames as storage paths. Data is not encrypted at rest and is retained until deleted. No external telemetry is added.
 - Bind to `127.0.0.1`. This is a **single-user evaluator application**, not a multi-tenant production service. Before remote hosting add authentication, authorization, tenant isolation, TLS, malware scanning, encrypted storage, retention/audit policies, rate limiting and an isolated job queue/worker sandbox.
 - Maximum file: **20 MB**. PDF: **20 pages**. Images: **25 megapixels**. Workbook: **20 sheets, 5,000 total rows, 100 columns**, expanded XLSX at most 80 MB. At most **500 records** per document. Uploads are processed one at a time; concurrent requests receive a retryable `429`.
 - Content signatures are checked for binary formats, multipart bodies are bounded, XLSX expansion is bounded, cross-origin writes are rejected, and CSV exports neutralize spreadsheet formulas. PDF/image parsing still relies on native libraries; keep dependencies updated and use isolation for untrusted public uploads.

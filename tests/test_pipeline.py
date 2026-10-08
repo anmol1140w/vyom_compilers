@@ -52,6 +52,50 @@ def test_native_pdf_and_human_review_round_trip(client, upload):
     assert client.get(f"/api/documents/{record['id']}").json() == saved
 
 
+def test_processing_metadata_and_structured_native_provenance(upload):
+    record = upload("sample-invoice.pdf").json()
+    assert record["processing"]["record_count"] == 1
+    assert record["processing"]["page_count"] == 1
+    assert record["processing"]["extraction_duration_ms"] >= 0
+    assert record["processing"]["validation_duration_ms"] >= 0
+    assert record["routing"] == {
+        "document_class": "digital_pdf",
+        "selected_route": "pdf_text",
+        "reason": "Usable native PDF text was available, so raster OCR was not required.",
+        "handwriting_requested": False,
+    }
+    invoice = record["invoices"][0]
+    evidence = invoice["field_provenance"]["invoice_number"]
+    assert evidence["observations"][0]["source"] == "native_text"
+    assert evidence["observations"][0]["page_number"] == 1
+    assert "extraction_completed" in {event["action"] for event in record["audit_events"]}
+    assert record["extraction_snapshot"][0]["invoice_number"] == invoice["invoice_number"]
+
+
+def test_extraction_snapshot_and_review_corrections_are_separate(client, upload):
+    record = upload("sample-invoice.pdf").json()
+    original = record["invoices"][0]["totals"]["grand_total"]
+    record["invoices"][0]["totals"]["grand_total"] = "11800.01"
+    updated = client.put(
+        f"/api/documents/{record['id']}",
+        json={"invoices": record["invoices"], "reviewer_confirmed": True},
+    ).json()
+    assert updated["invoices"][0]["totals"]["grand_total"] == "11800.01"
+    assert updated["extraction_snapshot"][0]["totals"]["grand_total"] == original
+    corrections = updated["human_corrections"]
+    assert any(
+        correction["field"] == "totals.grand_total"
+        and correction["old_value"] == original
+        and correction["new_value"] == "11800.01"
+        for correction in corrections
+    )
+    assert {event["action"] for event in updated["audit_events"]} >= {
+        "reviewer_correction",
+        "reviewer_confirmation",
+        "revalidation",
+    }
+
+
 @pytest.mark.parametrize("kind", ["png", "jpg", "jpeg", "pdf"])
 def test_real_ocr_for_images_and_scanned_pdf(upload, kind):
     image = Image.open(SAMPLES / "sample-invoice.png").convert("RGB")
@@ -66,6 +110,24 @@ def test_real_ocr_for_images_and_scanned_pdf(upload, kind):
     assert record["invoices"][0]["totals"]["grand_total"] == "14160.00"
     assert len(record["invoices"][0]["line_items"]) == 2
     assert record["invoices"][0]["confidence"] > 0.8
+
+
+def test_ocr_regions_are_retained_as_source_observations(upload):
+    record = upload("sample-invoice.png").json()
+    regions = [
+        observation
+        for observation in record["observations"]
+        if observation["source"] == "ocr" and observation["bounding_box"]
+    ]
+    assert regions
+    assert all(region["page_number"] == 1 for region in regions)
+    assert all(
+        0 <= region["bounding_box"][key] <= 1
+        for region in regions
+        for key in ("x", "y", "width", "height")
+    )
+    # Recognition scores stay on source observations and are not field accuracy claims.
+    assert record["invoices"][0]["field_confidence"] == {}
 
 
 def test_handwriting_without_model_does_not_claim_reliability(upload):
@@ -115,6 +177,7 @@ def test_export_download_readback_and_delete(client, upload):
     assert client.get(url + "/source").status_code == 404
     assert client.get("/api/documents").json() == {"documents": []}
     assert not (client.app.state.store.uploads / record["id"]).exists()
+    assert not (client.app.state.store.preprocessing / record["id"]).exists()
 
 
 def test_persists_across_application_restart(tmp_path):
