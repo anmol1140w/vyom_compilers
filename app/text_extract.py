@@ -6,6 +6,7 @@ handle more layouts; this parser never equates OCR text with a verified record.
 
 import re
 
+from .identifiers import extract_identifier_fields
 from .models import Invoice, LineItem
 from .normalize import ALIASES, HEADER_MAP, header, iso_date, number
 
@@ -52,6 +53,10 @@ def table_header(line):
 def parse_text(raw: str, method: str, confidence: float | None = None):
     invoice = Invoice(extraction_method=method, confidence=confidence)
     warnings = []
+    identifiers, identifier_evidence, identifier_warnings = extract_identifier_fields(raw)
+    invoice.identifiers = identifiers
+    invoice.field_evidence.update(identifier_evidence)
+    warnings.extend(identifier_warnings)
     lines = [line.strip() for line in raw.splitlines() if line.strip()]
     metadata_lines = [line.replace(" | ", "  ") for line in lines]
     for field, labels in {
@@ -168,16 +173,28 @@ def parse_text(raw: str, method: str, confidence: float | None = None):
             warnings.append(f"Unparsed possible item row: {line[:180]}")
             continue
         mapped = {}
+        item_evidence = {}
         failed = False
         for key, value in zip(columns, cells):
+            item_evidence[key] = value
             mapped[key] = value if key in {"description", "hsn_sac", "unit"} else number(value)
             if mapped[key] is None:
                 failed = True
         if failed:
             warnings.append(f"Ambiguous item row left for review: {line[:180]}")
             continue
-        invoice.field_evidence[f"line_items.{len(invoice.line_items)}"] = line
-        invoice.line_items.append(LineItem(**mapped))
+        item_index = len(invoice.line_items)
+        invoice.field_evidence[f"line_items.{item_index}"] = line
+        invoice.line_items.append(
+            LineItem(
+                **mapped,
+                provenance={
+                    "source_text": line,
+                    "extraction_method": method,
+                    "field_evidence": item_evidence,
+                },
+            )
+        )
     invoice_labels = [r"invoice\s*(?:no\.?|number|#)", r"inv\.?\s*no\.?", r"bill\s*no\.?"]
     identities = {_labeled([line], invoice_labels)[0] for line in metadata_lines} - {None}
     if len(identities) > 1:

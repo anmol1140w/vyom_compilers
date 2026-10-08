@@ -3,6 +3,7 @@
 import csv
 import io
 import json
+import shutil
 import sqlite3
 from pathlib import Path
 
@@ -15,6 +16,8 @@ class Store:
         self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.uploads = root / "uploads"
         self.uploads.mkdir(mode=0o700, exist_ok=True)
+        self.preprocessing = root / "preprocessed"
+        self.preprocessing.mkdir(mode=0o700, exist_ok=True)
         self.db = root / "records.sqlite3"
         with self.connect() as connection:
             connection.execute(
@@ -70,6 +73,12 @@ class Store:
         with self.connect() as connection:
             connection.execute("DELETE FROM documents WHERE id=?", (document_id,))
         (self.uploads / document_id).unlink(missing_ok=True)
+        shutil.rmtree(self.preprocessing / document_id, ignore_errors=True)
+
+    def cleanup_preprocessing(self, document_id: str):
+        """Remove derived artifacts when an upload fails before persistence."""
+
+        shutil.rmtree(self.preprocessing / document_id, ignore_errors=True)
 
 
 def spreadsheet_safe(value):
@@ -97,8 +106,18 @@ def csv_export(document: Document) -> str:
         "buyer_name",
         "buyer_gstin",
         "place_of_supply",
+        "irn",
+        "acknowledgement_number",
+        "acknowledgement_date",
+        "eway_bill_number",
+        "vehicle_number",
+        "transport_mode",
     ]
-    item_keys = list(Invoice.model_fields["line_items"].annotation.__args__[0].model_fields)
+    item_keys = [
+        key
+        for key in Invoice.model_fields["line_items"].annotation.__args__[0].model_fields
+        if key != "provenance"
+    ]
     total_keys = list(Invoice.model_fields["totals"].annotation.model_fields)
     columns = (
         base_keys
@@ -127,6 +146,17 @@ def csv_export(document: Document) -> str:
                 f"{role}_{key}": getattr(getattr(invoice, role), key)
                 for role in ("supplier", "buyer")
                 for key in ("name", "gstin")
+            },
+            **{
+                key: getattr(invoice.identifiers, key)
+                for key in (
+                    "irn",
+                    "acknowledgement_number",
+                    "acknowledgement_date",
+                    "eway_bill_number",
+                    "vehicle_number",
+                    "transport_mode",
+                )
             },
             **{f"invoice_{key}": getattr(invoice.totals, key) for key in total_keys},
             "issues": json.dumps(

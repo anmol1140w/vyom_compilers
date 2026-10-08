@@ -36,8 +36,10 @@ def extract_vision(image: Image.Image) -> list[Invoice]:
         "Dates are YYYY-MM-DD (Indian day-first). All amounts and quantities are decimal strings. "
         "Taxable value means value AFTER line discount and BEFORE tax. Total is tax-inclusive. "
         "Distinguish supplier and buyer. Preserve HSN codes and GSTIN as strings. Currency INR "
-        "unless another is explicit. Include field_evidence with verbatim visible text for each "
-        "invoice number, date, GSTIN and total; do not infer confidence. Return only schema JSON."
+        "unless another is explicit. Extract IRN, acknowledgement number/date, e-way bill and "
+        "vehicle identifiers only when visibly present. Include field_evidence with verbatim "
+        "visible text for each invoice number, date, GSTIN, total and identifier; do not infer "
+        "confidence. Return only schema JSON."
     )
     endpoint = os.getenv("VYOM_VISION_URL", "http://127.0.0.1:11434").rstrip("/")
     with httpx.Client(timeout=httpx.Timeout(180, connect=5), trust_env=False) as client:

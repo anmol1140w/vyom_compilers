@@ -39,7 +39,7 @@ The sample GSTIN is syntactically/checksum-valid but **not verified as a real re
 Upload → size/extension/signature checks → format router
   CSV/XLSX → header/delimiter detection → rows → invoice grouping
   PDF      → native text when usable; otherwise bounded page rendering → OCR
-  JPG/PNG  → EXIF orientation + grayscale/autocontrast → OCR + layout rows
+  JPG/PNG  → bounded quality assessment + retained preprocessing → OCR + layout rows
   Optional → local Ollama VLM on page images, including handwriting
                            ↓
   strict Pydantic schema + Decimal financial normalization + source evidence
@@ -56,6 +56,8 @@ Upload → size/extension/signature checks → format router
 - Preserves original spreadsheet columns and rows in `tables`, including unmapped fields. Per-sheet rows group by invoice number and supplier identity. Ambiguous continuation rows and conflicting repeated totals are flagged.
 - Generic transaction tables are preserved as separate `transaction` records; missing GST/invoice fields remain review issues rather than being invented.
 - Printed PDF/image fallback extraction handles labeled supplier/buyer, GSTINs, invoice number/date, place of supply, amounts, and recognizable item tables. Arbitrary layouts may need a VLM or corrections.
+- Visual PDF/image input receives deterministic, bounded quality signals for blur, brightness, contrast, resolution, skew, readability, and ruled-table likelihood. The review response retains private orientation-corrected, grayscale, autocontrast, thresholded, sharpened, denoised, upscaled, and deskewed previews. These signals guide review and preprocessing; they are not field-accuracy probabilities or handwriting recognition.
+- Elevated blur selects grayscale plus sharpening for the OCR pass; normal pages use grayscale plus autocontrast. The original source is always retained separately.
 - Decimal strings avoid binary floating-point money errors. HSN/SAC and invoice identifiers stay strings. Dates use Indian day-first normalization.
 - Only defensible spreadsheet calculations are derived (quantity × price − line discount, sums of complete columns, or sums of explicit item totals). Derivations are recorded in `field_evidence`. Missing tax values are not manufactured.
 - `taxable_value` means value **after item discount and before tax**. Invoice-level `discount` is informational; it is not subtracted a second time. `round_off` is included in total reconciliation. An invoice-wide discount must already be reflected in taxable values.
@@ -69,6 +71,8 @@ Upload → size/extension/signature checks → format router
 - CGST/SGST split consistency, mixed IGST/local taxes, and supply-state tax-regime warnings. Special tax treatments (SEZ, reverse charge, mixed supplies) remain human-review cases.
 - Three statuses: `invalid` (errors), `needs_review` (warnings), `validated` (no unresolved checks). Every PDF/OCR/VLM extraction requires explicit source comparison, regardless of its recognition score.
 - Source extraction warnings remain visible after review. Reviewer confirmation acknowledges those warnings but cannot override deterministic validation failures. Provenance is server-controlled.
+- Page-level heuristic layout regions and field readings are retained for review. OCR, native-text, and optional vision readings are compared for critical fields; disagreements are marked as conflicts and are not silently repaired. Agreement is a comparison result, not a calibrated accuracy probability.
+- Line items retain source row text, page/region context when available, and extraction method. IRN, acknowledgement, e-way bill, vehicle, and transport identifiers are extracted as structured fields when explicitly labelled.
 
 ## Handwritten invoices and optional local vision
 
@@ -112,9 +116,10 @@ curl -o records.csv 'http://127.0.0.1:8000/api/documents/DOCUMENT_ID/export?form
 | `GET /api/health` | OCR package availability, configured vision model, limits (not model-readiness certification) |
 | `POST /api/documents` | Multipart `file` plus optional `handwriting` boolean |
 | `GET /api/documents` | Latest 200 document summaries |
-| `GET /api/documents/{id}` | Complete normalized document, tables, evidence, raw text and issues |
+| `GET /api/documents/{id}` | Complete normalized document, tables, layout regions, source readings, evidence, raw text and issues |
 | `PUT /api/documents/{id}` | JSON `{ "invoices": [...], "reviewer_confirmed": true }`; strict schema and revalidation |
 | `GET /api/documents/{id}/source` | Original document download |
+| `GET /api/documents/{id}/preprocessing/{page}/{name}` | Server-controlled retained preprocessing preview |
 | `GET /api/documents/{id}/export?format=json\|csv` | Full nested JSON or flattened item CSV |
 | `DELETE /api/documents/{id}` | Remove saved record and original source |
 | `GET /api/samples` | Synthetic sample download metadata |
@@ -123,12 +128,12 @@ Use `/docs` for the complete schema. Invoice records contain supplier/buyer, inv
 
 ## Storage, safety and operating limits
 
-- Original documents and records live in `.data/` by default; set `VYOM_DATA_DIR` to change this. The app creates private directories/files and never uses client filenames as storage paths. Data is not encrypted at rest and is retained until deleted. No external telemetry is added.
+- Original documents, retained preprocessing previews, and records live in `.data/` by default; set `VYOM_DATA_DIR` to change this. The app creates private directories/files and never uses client filenames as storage paths. Data is not encrypted at rest and is retained until deleted. No external telemetry is added.
 - Bind to `127.0.0.1`. This is a **single-user evaluator application**, not a multi-tenant production service. Before remote hosting add authentication, authorization, tenant isolation, TLS, malware scanning, encrypted storage, retention/audit policies, rate limiting and an isolated job queue/worker sandbox.
 - Maximum file: **20 MB**. PDF: **20 pages**. Images: **25 megapixels**. Workbook: **20 sheets, 5,000 total rows, 100 columns**, expanded XLSX at most 80 MB. At most **500 records** per document. Uploads are processed one at a time; concurrent requests receive a retryable `429`.
 - Content signatures are checked for binary formats, multipart bodies are bounded, XLSX expansion is bounded, cross-origin writes are rejected, and CSV exports neutralize spreadsheet formulas. PDF/image parsing still relies on native libraries; keep dependencies updated and use isolation for untrusted public uploads.
 - Source text preview is capped at 300,000 characters; original spreadsheets remain in structured `tables` and source downloads.
-- There is no live GST portal integration, e-invoice IRN verification, global cross-document duplicate detection, trained layout-specific model, handwriting fine-tuning, or measured real-world accuracy guarantee.
+- There is no live GST portal integration, e-invoice IRN verification, global cross-document duplicate detection, trained layout-specific model, handwriting fine-tuning, or measured real-world accuracy guarantee. The optional local QR decoder only creates reviewable observations/candidates. Heuristic layout regions and source consensus are review aids, not document-understanding accuracy claims.
 
 ## Development and checks
 

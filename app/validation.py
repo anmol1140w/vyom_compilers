@@ -116,6 +116,20 @@ def validate_invoice(invoice: Invoice, index: int) -> list[Issue]:
             )
     if not invoice.supplier.name:
         add("missing_required", "supplier.name", "Supplier name is missing.")
+    if invoice.identifiers.irn and not re.fullmatch(r"[0-9A-Fa-f]{64}", invoice.identifiers.irn):
+        add(
+            "invalid_identifier_format",
+            "identifiers.irn",
+            "IRN is not a 64-character hexadecimal value; compare it with the source.",
+        )
+    if invoice.identifiers.eway_bill_number and not re.fullmatch(
+        r"\d{12}", invoice.identifiers.eway_bill_number
+    ):
+        add(
+            "invalid_identifier_format",
+            "identifiers.eway_bill_number",
+            "E-way bill number is not a 12-digit value; compare it with the source.",
+        )
     for name in ("supplier", "buyer"):
         party = getattr(invoice, name)
         if party.gstin and not valid_gstin(party.gstin):
@@ -287,12 +301,16 @@ def validate_invoice(invoice: Invoice, index: int) -> list[Issue]:
 
 def validate_document(document: Document) -> Document:
     issues = []
-    if not document.invoices or not any(
-        invoice.invoice_number
-        or invoice.supplier.name
-        or invoice.line_items
-        or invoice.totals.grand_total is not None
-        for invoice in document.invoices
+    records_to_check = [*document.invoices, *document.extraction_snapshot]
+    if not records_to_check or (
+        not any(
+            invoice.invoice_number
+            or invoice.supplier.name
+            or invoice.line_items
+            or invoice.totals.grand_total is not None
+            for invoice in records_to_check
+        )
+        and not document.raw_text.strip()
     ):
         issues.append(
             Issue(

@@ -146,3 +146,11 @@ def test_conservative_numeric_normalization(value, expected):
 def test_dates_are_day_first_and_invalid_dates_remain_visible():
     assert iso_date("02/03/2026") == "2026-03-02"
     assert iso_date("31/02/2026") == "31/02/2026"
+
+
+def test_gst_identifier_formats_are_checked_without_claiming_verification():
+    record = invoice()
+    record.identifiers.irn = "not-an-irn"
+    record.identifiers.eway_bill_number = "123"
+
+    assert "invalid_identifier_format" in codes(record)

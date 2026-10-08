@@ -189,6 +189,12 @@ def extract_tabular(path: Path, kind: str):
                 "place_of_supply",
                 "reverse_charge",
                 "document_type",
+                "irn",
+                "acknowledgement_number",
+                "acknowledgement_date",
+                "eway_bill_number",
+                "vehicle_number",
+                "transport_mode",
             ):
                 values = list(dict.fromkeys(row[field] for _, row in entries if row.get(field)))
                 if len(values) > 1:
@@ -217,7 +223,20 @@ def extract_tabular(path: Path, kind: str):
                                 f"{sheet}: unrecognized document type; retained as transaction."
                             )
                             value = "transaction"
-                    setattr(invoice, field, value)
+                    if field in {
+                        "irn",
+                        "acknowledgement_number",
+                        "acknowledgement_date",
+                        "eway_bill_number",
+                        "vehicle_number",
+                        "transport_mode",
+                    }:
+                        setattr(invoice.identifiers, field, value)
+                        invoice.field_evidence[f"identifiers.{field}"] = (
+                            f"{sheet}, rows {row_preview}"
+                        )
+                    else:
+                        setattr(invoice, field, value)
             for party_name in ("supplier", "buyer"):
                 party = {}
                 for key in ("name", "gstin", "address"):
@@ -237,9 +256,11 @@ def extract_tabular(path: Path, kind: str):
                 setattr(invoice, party_name, Party(**party))
             for row_index, mapped in entries:
                 item_data = {}
+                item_evidence = {}
                 for key in LineItem.model_fields:
                     if key not in mapped:
                         continue
+                    item_evidence[key] = str(mapped[key])
                     value = (
                         mapped[key]
                         if key in {"description", "hsn_sac", "unit"}
@@ -251,7 +272,14 @@ def extract_tabular(path: Path, kind: str):
                         )
                     item_data[key] = value
                 if item_data:
-                    item = LineItem(**item_data)
+                    item = LineItem(
+                        **item_data,
+                        provenance={
+                            "source_text": f"{sheet} row {row_index}",
+                            "extraction_method": "tabular",
+                            "field_evidence": item_evidence,
+                        },
+                    )
                     if (
                         item.taxable_value is None
                         and item.quantity is not None
