@@ -106,8 +106,18 @@ def csv_export(document: Document) -> str:
         "buyer_name",
         "buyer_gstin",
         "place_of_supply",
+        "irn",
+        "acknowledgement_number",
+        "acknowledgement_date",
+        "eway_bill_number",
+        "vehicle_number",
+        "transport_mode",
     ]
-    item_keys = list(Invoice.model_fields["line_items"].annotation.__args__[0].model_fields)
+    item_keys = [
+        key
+        for key in Invoice.model_fields["line_items"].annotation.__args__[0].model_fields
+        if key != "provenance"
+    ]
     total_keys = list(Invoice.model_fields["totals"].annotation.model_fields)
     columns = (
         base_keys
@@ -136,6 +146,17 @@ def csv_export(document: Document) -> str:
                 f"{role}_{key}": getattr(getattr(invoice, role), key)
                 for role in ("supplier", "buyer")
                 for key in ("name", "gstin")
+            },
+            **{
+                key: getattr(invoice.identifiers, key)
+                for key in (
+                    "irn",
+                    "acknowledgement_number",
+                    "acknowledgement_date",
+                    "eway_bill_number",
+                    "vehicle_number",
+                    "transport_mode",
+                )
             },
             **{f"invoice_{key}": getattr(invoice.totals, key) for key in total_keys},
             "issues": json.dumps(

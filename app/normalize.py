@@ -121,5 +121,27 @@ ALIASES = {
     "currency": ["currency"],
     "document_type": ["document type", "voucher type"],
     "reverse_charge": ["reverse charge", "rcm"],
+    "irn": ["irn", "invoice reference number", "invoice reference"],
+    "acknowledgement_number": [
+        "acknowledgement number",
+        "acknowledgment number",
+        "ack no",
+        "acknowledgement no",
+        "acknowledgment no",
+    ],
+    "acknowledgement_date": [
+        "acknowledgement date",
+        "acknowledgment date",
+        "ack date",
+    ],
+    "eway_bill_number": [
+        "eway bill number",
+        "e-way bill number",
+        "eway bill no",
+        "e-way bill no",
+        "eway no",
+    ],
+    "vehicle_number": ["vehicle number", "vehicle no", "vehicle registration"],
+    "transport_mode": ["transport mode", "mode of transport"],
 }
 HEADER_MAP = {header(alias): key for key, aliases in ALIASES.items() for alias in [key, *aliases]}

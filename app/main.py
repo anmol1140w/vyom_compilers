@@ -13,7 +13,9 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 
+from .consensus import apply_consensus, merge_summaries, source_for_method
 from .extraction import MAX_PAGES, extract_document, ocr_available
+from .layout import infer_layout_regions
 from .models import (
     AuditEvent,
     Document,
@@ -315,8 +317,17 @@ def create_app(data_dir: Path | None = None):
                         metadata={"sheet_count": str(len(document.tables))},
                     )
                 ]
+                summaries = []
                 for invoice in document.invoices:
                     attach_invoice_provenance(invoice, observations=document.observations)
+                    summaries.append(
+                        apply_consensus(
+                            invoice,
+                            [(source_for_method("tabular"), invoice)],
+                            document.observations,
+                        )
+                    )
+                document.consensus = merge_summaries(summaries)
             else:
                 (
                     document.invoices,
@@ -324,14 +335,17 @@ def create_app(data_dir: Path | None = None):
                     document.pipeline,
                     document.extraction_warnings,
                     document.observations,
+                    document.consensus,
                 ) = extract_document(
                     path,
                     kind,
                     handwriting,
                     include_observations=True,
+                    include_consensus=True,
                     preprocessing=ocr_preprocessing,
                 )
             document.extraction_warnings = quality_warnings + document.extraction_warnings
+            document.layout_regions = infer_layout_regions(document.observations)
             annotate_page_quality(
                 document.page_quality,
                 document.observations,
@@ -428,12 +442,35 @@ def create_app(data_dir: Path | None = None):
                 if original
                 else {}
             )
+            for line_index, item in enumerate(invoice.line_items):
+                if original and line_index < len(original.line_items):
+                    item.provenance = original.line_items[line_index].provenance.model_copy(
+                        deep=True
+                    )
+                else:
+                    item.provenance = item.provenance.model_copy(
+                        update={
+                            "page_number": None,
+                            "source_region": None,
+                            "source_text": None,
+                            "extraction_method": "manual",
+                            "field_evidence": {},
+                        }
+                    )
             invoice.field_evidence["review_note"] = (
                 "Record edited in review; original extraction evidence retained and may not match corrected values."
             )
         timestamp = utc_now()
         corrections, audit_events = review_audit_entries(before, submitted, timestamp)
         document.invoices = changes.invoices
+        for correction in corrections:
+            if correction.invoice_index >= len(document.invoices):
+                continue
+            provenance = document.invoices[correction.invoice_index].field_provenance.get(
+                correction.field
+            )
+            if provenance is not None:
+                provenance.status = "corrected"
         document.review = Review(confirmed=changes.reviewer_confirmed, updated_at=utc_now())
         document.human_corrections.extend(corrections)
         document.audit_events.extend(audit_events)

@@ -44,12 +44,64 @@ class SourceObservation(Model):
     metadata: dict[str, str] = Field(default_factory=dict, max_length=100)
 
 
+class FieldReading(Model):
+    """A normalized reading from one independent extraction source."""
+
+    source: ObservationSource
+    value: str | None = Field(default=None, max_length=10000)
+    evidence: str | None = Field(default=None, max_length=10000)
+    page_number: int | None = Field(default=None, ge=1)
+    bounding_box: BoundingBox | None = None
+    recognition_score: float | None = Field(default=None, ge=0, le=1)
+    preprocessing: str | None = Field(default=None, max_length=200)
+
+
 class FieldProvenance(Model):
     """Evidence attached to one normalized field, separate from its value."""
 
     observations: list[SourceObservation] = Field(default_factory=list, max_length=20)
+    readings: list[FieldReading] = Field(default_factory=list, max_length=20)
     status: Literal["observed", "derived", "conflict", "unreadable", "corrected"] = "observed"
     confidence: float | None = Field(default=None, ge=0, le=1)
+    alternatives: list[str] = Field(default_factory=list, max_length=20)
+
+
+class ConsensusSummary(Model):
+    """Explainable comparison status; no score is implied by agreement."""
+
+    status: Literal["not_run", "single_source", "agree", "conflict"] = "not_run"
+    sources: list[ObservationSource] = Field(default_factory=list, max_length=20)
+    fields_compared: int = Field(default=0, ge=0)
+    fields_with_readings: int = Field(default=0, ge=0)
+    conflicts: list[str] = Field(default_factory=list, max_length=100)
+    notes: list[str] = Field(default_factory=list, max_length=20)
+
+
+LayoutRegionKind = Literal[
+    "header",
+    "supplier",
+    "buyer",
+    "invoice_metadata",
+    "line_items",
+    "tax_summary",
+    "totals",
+    "payment",
+    "qr",
+    "signature",
+    "unknown",
+]
+
+
+class LayoutRegion(Model):
+    """A conservative page region inferred from source observations."""
+
+    page_number: int = Field(ge=1)
+    kind: LayoutRegionKind = "unknown"
+    text: str = Field(default="", max_length=10000)
+    bounding_box: BoundingBox | None = None
+    observation_indexes: list[int] = Field(default_factory=list, max_length=500)
+    source: ObservationSource = "ocr"
+    method: str = "heuristic_text_geometry"
 
 
 class ProcessingMetadata(Model):
@@ -184,6 +236,27 @@ class Party(Model):
     address: str | None = None
 
 
+class LineItemProvenance(Model):
+    """Source context for one normalized line item row."""
+
+    page_number: int | None = Field(default=None, ge=1)
+    source_region: BoundingBox | None = None
+    source_text: str | None = Field(default=None, max_length=10000)
+    extraction_method: str = "unknown"
+    field_evidence: dict[str, str] = Field(default_factory=dict, max_length=100)
+
+
+class DocumentIdentifiers(Model):
+    """Identifiers commonly present on GST/e-invoice and transport documents."""
+
+    irn: str | None = Field(default=None, max_length=100)
+    acknowledgement_number: str | None = Field(default=None, max_length=100)
+    acknowledgement_date: str | None = None
+    eway_bill_number: str | None = Field(default=None, max_length=100)
+    vehicle_number: str | None = Field(default=None, max_length=50)
+    transport_mode: str | None = Field(default=None, max_length=100)
+
+
 class LineItem(Model):
     description: str | None = None
     hsn_sac: str | None = None
@@ -201,6 +274,7 @@ class LineItem(Model):
     igst_amount: Decimal | None = None
     cess_amount: Decimal | None = None
     total: Decimal | None = None
+    provenance: LineItemProvenance = Field(default_factory=LineItemProvenance)
 
     @field_validator(
         "quantity",
@@ -249,6 +323,7 @@ class Invoice(Model):
     buyer: Party = Field(default_factory=Party)
     place_of_supply: str | None = None
     reverse_charge: bool | None = None
+    identifiers: DocumentIdentifiers = Field(default_factory=DocumentIdentifiers)
     line_items: list[LineItem] = Field(default_factory=list, max_length=5000)
     totals: Totals = Field(default_factory=Totals)
     confidence: float | None = Field(default=None, ge=0, le=1)
@@ -294,8 +369,10 @@ class Document(Model):
     quality: QualityAssessment = Field(default_factory=QualityAssessment)
     page_quality: list[PageQuality] = Field(default_factory=list, max_length=20)
     preprocessing: list[PreprocessingRepresentation] = Field(default_factory=list, max_length=200)
+    layout_regions: list[LayoutRegion] = Field(default_factory=list, max_length=2000)
     routing: RoutingMetadata = Field(default_factory=RoutingMetadata)
     observations: list[SourceObservation] = Field(default_factory=list, max_length=20000)
+    consensus: ConsensusSummary = Field(default_factory=ConsensusSummary)
     risk: RiskAssessment = Field(default_factory=RiskAssessment)
     verification: VerificationSummary = Field(default_factory=VerificationSummary)
     # This is server-maintained and never accepted from ReviewUpdate.

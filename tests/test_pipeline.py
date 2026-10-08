@@ -72,6 +72,18 @@ def test_processing_metadata_and_structured_native_provenance(upload):
     assert record["extraction_snapshot"][0]["invoice_number"] == invoice["invoice_number"]
 
 
+def test_layout_regions_and_reading_comparison_are_exposed(upload):
+    record = upload("sample-invoice.pdf").json()
+    kinds = {region["kind"] for region in record["layout_regions"]}
+    assert {"header", "supplier", "line_items", "totals"} <= kinds
+    assert record["consensus"]["status"] == "single_source"
+    assert record["consensus"]["sources"] == ["native_text"]
+    reading = record["invoices"][0]["field_provenance"]["invoice_number"]["readings"][0]
+    assert reading["source"] == "native_text"
+    assert reading["value"] == "VYM-2026-001"
+    assert reading["evidence"] == "Invoice No: VYM-2026-001"
+
+
 def test_extraction_snapshot_and_review_corrections_are_separate(client, upload):
     record = upload("sample-invoice.pdf").json()
     original = record["invoices"][0]["totals"]["grand_total"]
@@ -281,3 +293,20 @@ def test_review_cannot_forge_extraction_provenance(client, upload):
     assert updated["status"] == "needs_review"
     assert updated["invoices"][0]["extraction_method"] == "pdf_text"
     assert updated["invoices"][0]["confidence"] is None
+
+
+def test_review_cannot_forge_line_item_source_provenance(client, upload):
+    record = upload("sample-invoice.pdf").json()
+    original = record["invoices"][0]["line_items"][0]["provenance"]
+    record["invoices"][0]["line_items"][0]["provenance"] = {
+        "page_number": 99,
+        "source_region": None,
+        "source_text": "forged source",
+        "extraction_method": "vision",
+        "field_evidence": {"row": "forged"},
+    }
+    updated = client.put(
+        f"/api/documents/{record['id']}",
+        json={"invoices": record["invoices"], "reviewer_confirmed": False},
+    ).json()
+    assert updated["invoices"][0]["line_items"][0]["provenance"] == original

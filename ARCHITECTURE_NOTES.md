@@ -85,6 +85,8 @@ The schema now supports:
 - source observations with OCR/native/VLM/tabular origin, page, normalized bounding
   box, preprocessing, and a separate recognition score;
 - per-field structured provenance alongside the legacy evidence text;
+- per-line-item source text, page, region, and extraction-method provenance;
+- structured IRN, acknowledgement, e-way bill, vehicle, and transport identifiers;
 - an immutable server-maintained extraction snapshot;
 - explicit human corrections and audit events for extraction, validation, review
   edits, confirmation, and revalidation;
@@ -120,8 +122,12 @@ signals require the quality/routing and consensus work below.
    quality inputs.
 3. **Layout and tables:** improve region detection, wrapped/multi-line row
    handling, native-PDF coordinate reconstruction, and line-level provenance.
+   The first heuristic page-region and source-reading increment is now present;
+   it remains deliberately conservative until labeled fixtures are added.
 4. **Consensus:** introduce reusable OCR/native/VLM/QR observations and conflict
-   states for critical fields; never silently choose a disagreement.
+   states for critical fields; never silently choose a disagreement. OCR/native/VLM
+   comparison and conflict clearing are now present, with optional QR candidates
+   and identifier comparisons; deterministic arithmetic readings remain future work.
 5. **Explainable review UI:** show route, source regions, observations, confidence
    semantics, correction history, and original-versus-current values.
 6. **GST document intelligence:** add QR, IRN, acknowledgement, e-way fields and

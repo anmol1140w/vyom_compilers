@@ -10,6 +10,8 @@ import numpy as np
 import pypdfium2 as pdfium
 from PIL import Image, ImageFilter, ImageOps, UnidentifiedImageError
 
+from .consensus import apply_consensus, consensus_warnings, merge_summaries, source_for_method
+from .identifiers import decode_qr
 from .models import BoundingBox, SourceObservation
 from .provenance import attach_invoice_provenance
 from .text_extract import parse_text
@@ -118,6 +120,13 @@ def _page_records(image, native, handwriting, page_number, preprocessing):
     confidence = None
     raw = native
     observations = []
+    summaries = []
+    qr_invoice = None
+    if image is not None:
+        qr_result = decode_qr(image, page_number)
+        if qr_result is not None:
+            qr_observation, qr_invoice = qr_result
+            observations.append(qr_observation)
     if native:
         observations.append(
             SourceObservation(source="native_text", page_number=page_number, text=native[:10000])
@@ -159,21 +168,19 @@ def _page_records(image, native, handwriting, page_number, preprocessing):
                     metadata={"evidence": "model-produced"},
                 )
             )
-            if raw and len(records) == 1:
-                baseline, _ = parse_text(raw, method, confidence)
-                comparisons = {
-                    "invoice_number": (baseline.invoice_number, records[0].invoice_number),
-                    "supplier.gstin": (baseline.supplier.gstin, records[0].supplier.gstin),
-                    "totals.grand_total": (
-                        baseline.totals.grand_total,
-                        records[0].totals.grand_total,
-                    ),
-                }
-                for field, (observed, predicted) in comparisons.items():
-                    if observed is not None and predicted is not None and observed != predicted:
-                        warnings.append(
-                            f"OCR/text and vision disagree on {field}; compare both readings with the source."
-                        )
+            baseline = parse_text(raw, method, confidence)[0] if raw else None
+            for record in records:
+                attach_invoice_provenance(
+                    record, page_number=page_number, observations=observations
+                )
+                candidates = [("vision", record)]
+                if baseline is not None and len(records) == 1:
+                    candidates.insert(0, (source_for_method(method), baseline))
+                if qr_invoice is not None:
+                    candidates.append(("qr", qr_invoice))
+                summary = apply_consensus(record, candidates, observations, page_number)
+                summaries.append(summary)
+                warnings.extend(consensus_warnings(summary))
             return (
                 records,
                 raw,
@@ -183,6 +190,7 @@ def _page_records(image, native, handwriting, page_number, preprocessing):
                     "Vision output requires source comparison; evidence text is model-produced, not independently verified."
                 ],
                 observations,
+                merge_summaries(summaries),
             )
         except Exception as exc:
             warnings.append(
@@ -193,7 +201,17 @@ def _page_records(image, native, handwriting, page_number, preprocessing):
             "Handwriting mode requested but no local vision model configured. Printed-text OCR is a fallback, not reliable handwriting recognition."
         )
     invoice, parse_warnings = parse_text(raw, method, confidence)
-    return [invoice], raw, method, warnings + parse_warnings, observations
+    attach_invoice_provenance(invoice, page_number=page_number, observations=observations)
+    candidates = [(source_for_method(method), invoice)]
+    if qr_invoice is not None:
+        candidates.append(("qr", qr_invoice))
+    summary = apply_consensus(
+        invoice,
+        candidates,
+        observations,
+        page_number,
+    )
+    return [invoice], raw, method, warnings + parse_warnings, observations, summary
 
 
 def extract_document(
@@ -201,19 +219,17 @@ def extract_document(
     kind: str,
     handwriting: bool = False,
     include_observations: bool = False,
+    include_consensus: bool = False,
     preprocessing: str = "autocontrast",
 ):
-    records, chunks, methods, warnings, observations = [], [], [], [], []
+    records, chunks, methods, warnings, observations, summaries = [], [], [], [], [], []
 
     def consume(image, native, page_number):
-        extracted, raw, method, notes, page_observations = _page_records(
+        extracted, raw, method, notes, page_observations, page_consensus = _page_records(
             image, native, handwriting, page_number, preprocessing
         )
         for invoice in extracted:
             invoice.field_evidence["page"] = str(page_number)
-            attach_invoice_provenance(
-                invoice, page_number=page_number, observations=page_observations
-            )
             existing = next(
                 (
                     record
@@ -234,6 +250,7 @@ def extract_document(
         methods.append(method)
         warnings.extend(f"Page {page_number}: {note}" for note in notes)
         observations.extend(page_observations)
+        summaries.append(page_consensus)
 
     if kind in {"png", "jpeg"}:
         consume(read_image(path), "", 1)
@@ -284,4 +301,8 @@ def extract_document(
         " + ".join(dict.fromkeys(methods)),
         list(dict.fromkeys(warnings)),
     )
-    return (*result, observations) if include_observations else result
+    if include_observations and include_consensus:
+        return (*result, observations, merge_summaries(summaries))
+    if include_observations:
+        return (*result, observations)
+    return result

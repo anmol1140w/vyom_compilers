@@ -4,10 +4,11 @@ Checkpoint: 2026-10-08
 
 ## Current position
 
-The repository audit, Phase 1 foundation, and the first Phase 2 quality/routing
+The repository audit, Phase 1 foundation, Phase 2 quality/routing increment, the
+first Phase 3/4 layout-and-consensus increment, and a structured GST-identifier
 increment from `PHASED_IMPLEMENTATION_PLAN.md` are complete. The next
-implementation session should continue with richer layout/table signals and then
-the consensus work described in `ARCHITECTURE_NOTES.md`.
+implementation session should continue with stronger table handling, visual
+source highlighting, and arithmetic/QR consensus.
 
 ## Completed in this session
 
@@ -62,6 +63,26 @@ the consensus work described in `ARCHITECTURE_NOTES.md`.
 - Kept borderless-table and handwriting classification conservative. No trained
   detector or calibrated confidence is claimed.
 
+### Phase 3/4 layout, consensus, and identifier increment
+
+- Added bounded heuristic page regions for header, supplier, buyer, invoice
+  metadata, line-item, tax, totals, payment, QR, and signature text areas.
+- Added reusable OCR/native-text/VLM/QR field-reading comparison for critical
+  invoice fields. Conflicts are retained as alternatives and clear the unresolved
+  target value instead of silently selecting a source.
+- Added line-item provenance with source text, page, region, extraction method,
+  and field evidence. Reviewer updates cannot forge that server-maintained source
+  context.
+- Added structured IRN, acknowledgement, e-way bill, vehicle, and transport-mode
+  fields. Labeled text and tabular aliases populate these fields conservatively.
+- Added optional local QR decoding through an already-installed OpenCV runtime;
+  QR readings are observations/candidates and are never treated as authoritative
+  GST verification.
+- Added format checks for IRN and e-way bill identifiers while keeping
+  `verification.status` separate from format validity.
+- Exposed source readings, layout regions, identifiers, and line-item evidence in
+  the review interface and retained identifier columns in CSV export.
+
 ## Verification at checkpoint
 
 The following checks pass after the changes:
@@ -76,12 +97,14 @@ node --check app/static/app.js
 The suite now includes focused coverage for native-text provenance, OCR source
 regions, processing/routing metadata, immutable extraction snapshots, reviewer
 correction/audit history, quality scoring, preprocessing artifacts, route signals,
-and preprocessing serving. The existing supported-file, validation, boundary,
-persistence, export, browser smoke, and optional vision tests remain in place.
+preprocessing serving, layout regions, single-source readings, and conflicting
+OCR/VLM critical-field readings. The existing supported-file, validation,
+boundary, persistence, export, browser smoke, and optional vision tests remain in
+place.
 
-Final Phase 2 verification for this checkpoint: `74 passed`, Ruff passed,
-compileall passed, JavaScript syntax passed, and the disposable-data browser smoke
-workflow passed.
+Final verification for this checkpoint: `82 passed`, Ruff passed, compileall
+passed, JavaScript syntax passed, and the disposable-data browser smoke workflow
+passed. One third-party Starlette/httpx deprecation warning remains.
 
 ## Important design constraints for the next session
 
@@ -97,8 +120,9 @@ workflow passed.
 
 ## Next work item
 
-Improve quality/layout signals with labeled fixtures and page-level table/layout
-region extraction. Then implement a reusable OCR/native-text/VLM observation
-consensus engine that records critical-field conflicts instead of selecting an
-uncertain value silently. Keep the current OCR fallback and review workflow as the
-safe baseline while adding those observations.
+Improve the heuristic layout increment with labeled fixtures, row-level OCR
+coordinates, wrapped-description handling, and native-PDF coordinate
+reconstruction. Extend consensus with deterministic arithmetic readings and
+structured QR mismatch explanations. Finish the review UI with source-image
+highlighting and original-versus-corrected field history before starting the
+duplicate, anomaly, risk, and workspace phases.

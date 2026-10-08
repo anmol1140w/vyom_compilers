@@ -521,6 +521,65 @@
     panel.append(block);
   }
 
+  function boxLabel(box) {
+    if (!box) return 'Coordinates unavailable for this source';
+    return `x ${Math.round(box.x * 100)}% · y ${Math.round(box.y * 100)}% · width ${Math.round(box.width * 100)}% · height ${Math.round(box.height * 100)}%`;
+  }
+
+  function renderConsensusAndLayout(panel) {
+    const doc = state.current;
+    if (!doc) return;
+    const consensus = doc.consensus || {};
+    const block = el('div', 'quality-summary');
+    block.append(panelHeading('Source readings and layout', 'Independent readings are compared transparently. Agreement is not a calibrated accuracy score, and conflicts are never silently repaired.'));
+    const fields = el('dl', 'field-grid');
+    addField(fields, 'Consensus status', humanize(consensus.status || 'not_run'));
+    addField(fields, 'Sources', Array.isArray(consensus.sources) && consensus.sources.length ? consensus.sources.map(humanize).join(', ') : 'None recorded');
+    addField(fields, 'Fields compared', consensus.fields_compared ?? 0);
+    addField(fields, 'Fields with readings', consensus.fields_with_readings ?? 0);
+    block.append(fields);
+    if (Array.isArray(consensus.notes)) for (const note of consensus.notes) block.append(el('p', 'section-note', note));
+    if (Array.isArray(consensus.conflicts) && consensus.conflicts.length) {
+      const conflict = el('div', 'notice notice-warning');
+      conflict.append(icon('alert'), el('p', '', `Conflicts require source review: ${consensus.conflicts.join(', ')}`));
+      block.append(conflict);
+    }
+
+    const regions = Array.isArray(doc.layout_regions) ? doc.layout_regions : [];
+    if (regions.length) {
+      const disclosure = el('details', 'evidence-details');
+      disclosure.append(el('summary', '', `View ${regions.length} inferred page region${regions.length === 1 ? '' : 's'}`));
+      const list = el('dl', 'evidence-list');
+      for (const region of regions.slice(0, 80)) {
+        const label = `${humanize(region.kind)} · page ${region.page_number}`;
+        list.append(el('dt', '', label), el('dd', '', `${region.text || 'No text'} · ${boxLabel(region.bounding_box)}`));
+      }
+      disclosure.append(list);
+      block.append(disclosure);
+    }
+
+    const invoice = currentInvoice();
+    const provenance = invoice?.field_provenance || {};
+    const fieldsWithReadings = Object.entries(provenance).filter(([, value]) => Array.isArray(value?.readings) && value.readings.length);
+    if (fieldsWithReadings.length) {
+      const disclosure = el('details', 'evidence-details');
+      disclosure.append(el('summary', '', 'View field readings and conflicts'));
+      const list = el('dl', 'evidence-list');
+      for (const [field, evidence] of fieldsWithReadings) {
+        const status = humanize(evidence.status || 'observed');
+        const readings = evidence.readings.map((reading) => {
+          const source = humanize(reading.source);
+          const value = reading.value === null || reading.value === undefined ? 'Unreadable' : reading.value;
+          return `${source}: ${value}${reading.evidence ? ` · “${reading.evidence}”` : ''}${reading.bounding_box ? ` · ${boxLabel(reading.bounding_box)}` : ''}`;
+        }).join(' | ');
+        list.append(el('dt', '', `${field} · ${status}`), el('dd', '', readings));
+      }
+      disclosure.append(list);
+      block.append(disclosure);
+    }
+    panel.append(block);
+  }
+
   function documentTotalNote(invoices) {
     const values = invoices.filter((invoice) => invoice.currency === 'INR').map((invoice) => invoice.totals?.grand_total).filter((value) => value !== null && value !== undefined && /^-?\d+(\.\d{1,8})?$/.test(String(value)));
     if (values.length < 2) return null;
@@ -543,6 +602,7 @@
     panel.replaceChildren();
     $('items-tab-count').textContent = invoice?.line_items?.length || 0;
     renderQualitySummary(panel);
+    renderConsensusAndLayout(panel);
     if (!invoice) {
       panel.append(el('div', 'compact-empty', 'No invoice records were extracted. Review the issues, raw text, and source file. You can add a record using the JSON editor.'));
       renderWarnings(panel);
@@ -565,6 +625,23 @@
     addField(fields, 'Currency', invoice.currency);
     addField(fields, 'Extraction method', humanize(invoice.extraction_method));
     details.append(fields);
+    const identifiers = invoice.identifiers || {};
+    const identifierEntries = [
+      ['irn', 'IRN'],
+      ['acknowledgement_number', 'Acknowledgement number'],
+      ['acknowledgement_date', 'Acknowledgement date'],
+      ['eway_bill_number', 'E-way bill number'],
+      ['vehicle_number', 'Vehicle number'],
+      ['transport_mode', 'Transport mode'],
+    ].filter(([key]) => identifiers[key] !== null && identifiers[key] !== undefined && identifiers[key] !== '');
+    if (identifierEntries.length) {
+      const identifierBlock = el('div', 'evidence-details');
+      identifierBlock.append(el('h3', '', 'GST and transport identifiers'));
+      const identifierGrid = el('dl', 'field-grid');
+      for (const [key, label] of identifierEntries) addField(identifierGrid, label, identifiers[key]);
+      identifierBlock.append(identifierGrid);
+      details.append(identifierBlock);
+    }
     const parties = el('div', 'party-grid');
     parties.append(partyCard('Supplier · From', invoice.supplier), partyCard('Buyer · Billed to', invoice.buyer));
     details.append(parties);
@@ -651,6 +728,22 @@
     table.append(head, body);
     wrapper.append(table);
     panel.append(wrapper);
+    const sourcedItems = items.filter((item) => item?.provenance?.source_text || item?.provenance?.source_region);
+    if (sourcedItems.length) {
+      const disclosure = el('details', 'evidence-details');
+      disclosure.append(el('summary', '', 'View line-item source evidence'));
+      const list = el('dl', 'evidence-list');
+      sourcedItems.forEach((item, index) => {
+        const provenance = item.provenance || {};
+        const location = provenance.source_region ? boxLabel(provenance.source_region) : 'No visual coordinates';
+        list.append(
+          el('dt', '', `Row ${index + 1} · ${humanize(provenance.extraction_method || 'unknown')}`),
+          el('dd', '', `${provenance.source_text || 'Source row retained'} · page ${provenance.page_number || 'not recorded'} · ${location}`),
+        );
+      });
+      disclosure.append(list);
+      panel.append(disclosure);
+    }
   }
 
   function renderIssues() {

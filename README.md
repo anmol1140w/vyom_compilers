@@ -71,6 +71,8 @@ Upload → size/extension/signature checks → format router
 - CGST/SGST split consistency, mixed IGST/local taxes, and supply-state tax-regime warnings. Special tax treatments (SEZ, reverse charge, mixed supplies) remain human-review cases.
 - Three statuses: `invalid` (errors), `needs_review` (warnings), `validated` (no unresolved checks). Every PDF/OCR/VLM extraction requires explicit source comparison, regardless of its recognition score.
 - Source extraction warnings remain visible after review. Reviewer confirmation acknowledges those warnings but cannot override deterministic validation failures. Provenance is server-controlled.
+- Page-level heuristic layout regions and field readings are retained for review. OCR, native-text, and optional vision readings are compared for critical fields; disagreements are marked as conflicts and are not silently repaired. Agreement is a comparison result, not a calibrated accuracy probability.
+- Line items retain source row text, page/region context when available, and extraction method. IRN, acknowledgement, e-way bill, vehicle, and transport identifiers are extracted as structured fields when explicitly labelled.
 
 ## Handwritten invoices and optional local vision
 
@@ -114,7 +116,7 @@ curl -o records.csv 'http://127.0.0.1:8000/api/documents/DOCUMENT_ID/export?form
 | `GET /api/health` | OCR package availability, configured vision model, limits (not model-readiness certification) |
 | `POST /api/documents` | Multipart `file` plus optional `handwriting` boolean |
 | `GET /api/documents` | Latest 200 document summaries |
-| `GET /api/documents/{id}` | Complete normalized document, tables, evidence, raw text and issues |
+| `GET /api/documents/{id}` | Complete normalized document, tables, layout regions, source readings, evidence, raw text and issues |
 | `PUT /api/documents/{id}` | JSON `{ "invoices": [...], "reviewer_confirmed": true }`; strict schema and revalidation |
 | `GET /api/documents/{id}/source` | Original document download |
 | `GET /api/documents/{id}/preprocessing/{page}/{name}` | Server-controlled retained preprocessing preview |
@@ -131,7 +133,7 @@ Use `/docs` for the complete schema. Invoice records contain supplier/buyer, inv
 - Maximum file: **20 MB**. PDF: **20 pages**. Images: **25 megapixels**. Workbook: **20 sheets, 5,000 total rows, 100 columns**, expanded XLSX at most 80 MB. At most **500 records** per document. Uploads are processed one at a time; concurrent requests receive a retryable `429`.
 - Content signatures are checked for binary formats, multipart bodies are bounded, XLSX expansion is bounded, cross-origin writes are rejected, and CSV exports neutralize spreadsheet formulas. PDF/image parsing still relies on native libraries; keep dependencies updated and use isolation for untrusted public uploads.
 - Source text preview is capped at 300,000 characters; original spreadsheets remain in structured `tables` and source downloads.
-- There is no live GST portal integration, e-invoice IRN verification, global cross-document duplicate detection, trained layout-specific model, handwriting fine-tuning, or measured real-world accuracy guarantee.
+- There is no live GST portal integration, e-invoice IRN verification, global cross-document duplicate detection, trained layout-specific model, handwriting fine-tuning, or measured real-world accuracy guarantee. The optional local QR decoder only creates reviewable observations/candidates. Heuristic layout regions and source consensus are review aids, not document-understanding accuracy claims.
 
 ## Development and checks
 

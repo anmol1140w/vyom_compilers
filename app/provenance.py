@@ -76,9 +76,37 @@ def attach_invoice_provenance(
             preprocessing=matched.preprocessing if matched else None,
             metadata={"evidence": "model-produced"} if source == "vision" else {},
         )
+        existing = invoice.field_provenance.get(field)
         invoice.field_provenance[field] = FieldProvenance(
             observations=[field_observation],
-            status="derived" if source == "derived" else "observed",
+            readings=existing.readings if existing else [],
+            status=(
+                existing.status
+                if existing and existing.status in {"conflict", "corrected", "unreadable"}
+                else "derived" if source == "derived" else "observed"
+            ),
+            confidence=existing.confidence if existing else None,
+            alternatives=existing.alternatives if existing else [],
+        )
+    for index, item in enumerate(invoice.line_items):
+        row_evidence = invoice.field_evidence.get(f"line_items.{index}")
+        matched = _matching_observation(row_evidence or item.provenance.source_text, observations)
+        existing = item.provenance
+        item.provenance = existing.model_copy(
+            update={
+                "page_number": page_number or existing.page_number or (matched.page_number if matched else None),
+                "source_region": matched.bounding_box if matched else existing.source_region,
+                "source_text": existing.source_text or row_evidence,
+                "extraction_method": (
+                    existing.extraction_method
+                    if existing.extraction_method != "unknown"
+                    else invoice.extraction_method
+                ),
+                "field_evidence": {
+                    **existing.field_evidence,
+                    **({"row": row_evidence} if row_evidence else {}),
+                },
+            }
         )
 
 
@@ -120,7 +148,7 @@ def changed_fields(before: Invoice | None, after: Invoice | None) -> list[tuple[
     changes = []
     for field in sorted(set(old_values) | set(new_values)):
         root = field.split(".", 1)[0].split("[", 1)[0]
-        if root in _SERVER_CONTROLLED_FIELDS:
+        if root in _SERVER_CONTROLLED_FIELDS or ".provenance" in field:
             continue
         old_value, new_value = old_values.get(field), new_values.get(field)
         if old_value != new_value:
